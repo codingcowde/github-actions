@@ -1,0 +1,66 @@
+name: Docker Compose and Python Testing Webhook with HMAC
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  check-docker-compose:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          if [ -f "requirements.txt" ]; then
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+          fi
+
+      - name: Run Python unit tests
+        id: run_tests
+        run: |
+          python -m unittest discover -s tests -p '*_test.py'
+
+      - name: Check if docker-compose.yml exists
+        id: check_file
+        run: |
+          if [ -f "docker-compose.yml" ]; then
+            echo "Docker Compose file exists."
+          else
+            echo "Docker Compose file does not exist."
+            exit 0
+
+      - name: Bring up Docker containers
+        id: docker_up
+        run: |
+          docker compose up -d || exit 0
+
+      - name: Extract repository name and commit hash
+        id: extract_info
+        run: |
+          REPO_NAME=$(basename -s .git `git config --get remote.origin.url`)
+          COMMIT_HASH=$(git rev-parse HEAD)
+          echo "repo_name=${REPO_NAME}" >> $GITHUB_ENV
+          echo "commit_hash=${COMMIT_HASH}" >> $GITHUB_ENV
+
+      - name: Generate HMAC signature and post to webhook
+        if: steps.docker_up.outcome == 'success'
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+        run: |
+          payload='{"repository": "'${REPO_NAME}'", "commit_hash": "'${COMMIT_HASH}'"}'
+          signature=$(echo -n "$payload" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | awk '{print $2}')
+          curl -X POST -H "Content-Type: application/json" \
+               -H "X-Hub-Signature-256: sha256=$signature" \
+               -d "$payload" \
+               $WEBHOOK_URL
