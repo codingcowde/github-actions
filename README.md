@@ -1,2 +1,2 @@
 # github-actions
-Some Action scripts
+Some Action script templates
